@@ -39,7 +39,7 @@ setupAuth(passport);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS للتطوير - مهم جداً لـ Render
+// CORS للتطوير
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -54,28 +54,31 @@ app.use((req, res, next) => {
 // المسارات
 app.use('/api', routes);
 
-// خدمة الملفات الثابتة - مهم جداً
+// خدمة الملفات الثابتة
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// في الإنتاج، خدمة ملفات الواجهة الأمامية
+// في الإنتاج، خدمة ملفات الواجهة الأمامية - هذا الجزء المهم
 if (process.env.NODE_ENV === 'production') {
-  // خدمة الملفات الثابتة من مجلد dist
-  const clientDistPath = path.join(__dirname, '../public');
-  app.use(express.static(clientDistPath));
+  // مجلد public هو مكان ملفات الواجهة بعد البناء
+  const publicPath = path.join(__dirname, '../public');
+  console.log('Serving static files from:', publicPath);
+  
+  // خدمة الملفات الثابتة
+  app.use(express.static(publicPath));
   
   // أي مسار آخر يعيد index.html
   app.get('*', (req, res) => {
-    res.sendFile(path.join(clientDistPath, 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
   });
 }
 
 // تهيئة Socket.io
 initializeSocket(httpServer);
 
-// تصدير التطبيق لـ Vercel/Render
+// تصدير التطبيق لـ Render
 export default app;
 
-// بدء الخادم فقط إذا لم يكن في بيئة Render/Vercel
+// بدء الخادم فقط إذا لم يكن في بيئة Render
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   httpServer.listen(PORT, async () => {
