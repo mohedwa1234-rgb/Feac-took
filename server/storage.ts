@@ -1,7 +1,7 @@
-import { eq, and, or, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, or, desc, sql } from 'drizzle-orm';
 import { db } from './db';
 import { 
-  users, posts, comments, likes, follows, apiKeys, transactions, calls, messages, notifications, aiModels,
+  users, posts, comments, likes, follows, apiKeys, transactions, calls, messages, notifications,
   type User, type NewUser, type Post, type Comment, type ApiKey, type Call, type Message, type Follow, type Notification,
   MASTER_VALIDATION_KEY
 } from '@shared/schema';
@@ -12,7 +12,7 @@ import { randomBytes } from 'crypto';
 const PostgresSessionStore = connectPg(session);
 
 export interface IStorage {
-  // ========== المستخدمين ==========
+  // المستخدمين
   getUser(id: number): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
@@ -21,7 +21,7 @@ export interface IStorage {
   updateUser(id: number, data: Partial<User>): Promise<User>;
   deleteUser(id: number): Promise<void>;
   
-  // ========== المنشورات ==========
+  // المنشورات
   createPost(userId: number, data: Partial<Post>): Promise<Post>;
   getPost(id: number): Promise<Post | undefined>;
   getPosts(limit?: number, offset?: number): Promise<Post[]>;
@@ -29,24 +29,24 @@ export interface IStorage {
   updatePost(id: number, data: Partial<Post>): Promise<Post>;
   deletePost(id: number): Promise<void>;
   
-  // ========== الإعجابات ==========
+  // الإعجابات
   likePost(userId: number, postId: number): Promise<void>;
   unlikePost(userId: number, postId: number): Promise<void>;
   isLiked(userId: number, postId: number): Promise<boolean>;
   
-  // ========== التعليقات ==========
+  // التعليقات
   createComment(userId: number, postId: number, content: string): Promise<Comment>;
   getComments(postId: number): Promise<Comment[]>;
   deleteComment(id: number): Promise<void>;
   
-  // ========== العلاقات (أصدقاء / متابعة) ==========
+  // العلاقات
   followUser(followerId: number, followingId: number): Promise<void>;
   unfollowUser(followerId: number, followingId: number): Promise<void>;
   getFollowers(userId: number): Promise<User[]>;
   getFollowing(userId: number): Promise<User[]>;
   areFriends(userId1: number, userId2: number): Promise<boolean>;
   
-  // ========== مفاتيح API ==========
+  // مفاتيح API
   createApiKey(userId: number, name: string, price: number): Promise<ApiKey>;
   getApiKeys(userId: number): Promise<ApiKey[]>;
   getAllApiKeys(): Promise<ApiKey[]>;
@@ -54,31 +54,30 @@ export interface IStorage {
   validateApiKey(key: string): Promise<boolean>;
   useApiKey(key: string): Promise<void>;
   
-  // ========== نظام النقاط ==========
+  // نظام النقاط
   addCredits(userId: number, amount: number, description: string): Promise<User>;
   deductCredits(userId: number, amount: number, description: string): Promise<User>;
   getUserCredits(userId: number): Promise<number>;
   getTransactions(userId: number): Promise<Transaction[]>;
   
-  // ========== المكالمات ==========
+  // المكالمات
   createCall(data: Partial<Call>): Promise<Call>;
   updateCall(id: number, data: Partial<Call>): Promise<Call>;
   getCall(id: number): Promise<Call | undefined>;
   
-  // ========== الرسائل ==========
+  // الرسائل
   createMessage(data: Partial<Message>): Promise<Message>;
   getMessagesBetween(userId1: number, userId2: number): Promise<Message[]>;
   markMessagesAsRead(userId: number, senderId: number): Promise<void>;
   
-  // ========== الإشعارات ==========
+  // الإشعارات
   createNotification(data: Partial<Notification>): Promise<Notification>;
   getNotifications(userId: number, limit?: number): Promise<Notification[]>;
   markNotificationAsRead(id: number): Promise<void>;
   
-  // ========== التحقق السيادي ==========
+  // التحقق السيادي
   validateMasterKey(key: string): boolean;
   
-  // ========== جلسات ==========
   sessionStore: session.Store;
 }
 
@@ -88,7 +87,7 @@ export class DatabaseStorage implements IStorage {
   constructor() {
     this.sessionStore = new PostgresSessionStore({
       conObject: {
-        connectionString: process.env.DATABASE_URL,
+        connectionString: process.env.DATABASE_URL!,
         ssl: process.env.NODE_ENV === 'production'
       },
       createTableIfMissing: true
@@ -185,10 +184,7 @@ export class DatabaseStorage implements IStorage {
   // ========== الإعجابات ==========
   async likePost(userId: number, postId: number): Promise<void> {
     await db.transaction(async (tx) => {
-      // إضافة الإعجاب
       await tx.insert(likes).values({ userId, postId, createdAt: new Date() });
-      
-      // زيادة عداد الإعجابات في المنشور
       await tx.update(posts)
         .set({ likesCount: sql`${posts.likesCount} + 1` })
         .where(eq(posts.id, postId));
@@ -199,7 +195,6 @@ export class DatabaseStorage implements IStorage {
     await db.transaction(async (tx) => {
       await tx.delete(likes)
         .where(and(eq(likes.userId, userId), eq(likes.postId, postId)));
-      
       await tx.update(posts)
         .set({ likesCount: sql`${posts.likesCount} - 1` })
         .where(eq(posts.id, postId));
@@ -319,7 +314,7 @@ export class DatabaseStorage implements IStorage {
       name,
       key,
       price,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 يوم
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     }).returning();
     return apiKey;
   }
