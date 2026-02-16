@@ -1,12 +1,9 @@
 import express from 'express';
 import { storage } from './storage';
-import { 
-  insertUserSchema, insertPostSchema, insertCommentSchema, insertApiKeySchema,
-  users, posts 
-} from '@shared/schema';
+import { insertUserSchema } from '@shared/schema';
 import { z } from 'zod';
-import { generateAITranslation, generateAIPost } from './ai-service';
-import { authenticateToken, isAdmin, hashPassword, comparePasswords } from './auth';
+import { generateVoiceDubbing } from './ai-service';
+import { authenticateToken, isAdmin, hashPassword } from './auth';
 import passport from 'passport';
 import multer from 'multer';
 import path from 'path';
@@ -49,7 +46,6 @@ router.post('/api/register', async (req, res) => {
   try {
     const userData = insertUserSchema.parse(req.body);
     
-    // التحقق من عدم وجود المستخدم
     const existingUser = await storage.getUserByUsername(userData.username);
     if (existingUser) {
       return res.status(400).json({ message: 'اسم المستخدم موجود بالفعل' });
@@ -60,7 +56,6 @@ router.post('/api/register', async (req, res) => {
       return res.status(400).json({ message: 'البريد الإلكتروني موجود بالفعل' });
     }
     
-    // تشفير كلمة المرور
     const hashedPassword = await hashPassword(userData.password);
     
     const user = await storage.createUser({
@@ -68,7 +63,6 @@ router.post('/api/register', async (req, res) => {
       password: hashedPassword
     });
     
-    // تسجيل الدخول تلقائياً بعد التسجيل
     req.login(user, (err) => {
       if (err) {
         return res.status(500).json({ message: 'خطأ في تسجيل الدخول' });
@@ -159,20 +153,11 @@ router.put('/api/users/profile', authenticateToken, upload.fields([
 router.post('/api/posts', authenticateToken, upload.single('media'), async (req: any, res) => {
   try {
     const userId = req.user.id;
-    const { content, isReel, useAI } = req.body;
-    
-    let finalContent = content;
-    let isAIGenerated = false;
-    
-    if (useAI === 'true' && content) {
-      finalContent = await generateAIPost(content);
-      isAIGenerated = true;
-    }
+    const { content, isReel } = req.body;
     
     const postData: any = {
-      content: finalContent,
-      isReel: isReel === 'true',
-      isAIGenerated
+      content,
+      isReel: isReel === 'true'
     };
     
     if (req.file) {
@@ -180,10 +165,8 @@ router.post('/api/posts', authenticateToken, upload.single('media'), async (req:
       const isVideo = file.mimetype.startsWith('video/');
       postData.mediaUrl = `/uploads/${file.filename}`;
       postData.mediaType = isVideo ? 'video' : 'image';
-      
-      // إذا كان فيديو، يمكن استخراج مدة الفيديو (هنا نضع قيمة افتراضية)
       if (isVideo) {
-        postData.duration = 30; // 30 ثانية افتراضياً
+        postData.duration = 30; // قيمة افتراضية
       }
     }
     
@@ -259,7 +242,7 @@ router.get('/api/posts/:id/comments', async (req, res) => {
   }
 });
 
-// ========== العلاقات (أصدقاء) ==========
+// ========== العلاقات ==========
 router.post('/api/follow/:userId', authenticateToken, async (req: any, res) => {
   try {
     const followerId = req.user.id;
@@ -285,26 +268,6 @@ router.delete('/api/follow/:userId', authenticateToken, async (req: any, res) =>
     res.json({ message: 'تم إلغاء المتابعة' });
   } catch (error) {
     res.status(500).json({ message: 'خطأ في إلغاء المتابعة' });
-  }
-});
-
-router.get('/api/users/:userId/followers', async (req, res) => {
-  try {
-    const userId = parseInt(req.params.userId);
-    const followers = await storage.getFollowers(userId);
-    res.json(followers);
-  } catch (error) {
-    res.status(500).json({ message: 'خطأ في جلب المتابعين' });
-  }
-});
-
-router.get('/api/users/:userId/following', async (req, res) => {
-  try {
-    const userId = parseInt(req.params.userId);
-    const following = await storage.getFollowing(userId);
-    res.json(following);
-  } catch (error) {
-    res.status(500).json({ message: 'خطأ في جلب من يتابعهم' });
   }
 });
 
@@ -335,21 +298,6 @@ router.get('/api/api-keys', authenticateToken, async (req: any, res) => {
   }
 });
 
-router.post('/api/buy-api-key/:id', authenticateToken, async (req: any, res) => {
-  try {
-    const keyId = parseInt(req.params.id);
-    const userId = req.user.id;
-    
-    // الحصول على المفتاح من قاعدة البيانات (يجب إضافة دالة getApiKeyById في storage)
-    // للتبسيط، نفترض أن لدينا المفاتيح كلها ونتحقق من السعر
-    // هنا سنحتاج دالة إضافية لكن سنختصر
-    
-    res.json({ message: 'تم الشراء بنجاح' });
-  } catch (error) {
-    res.status(500).json({ message: 'خطأ في الشراء' });
-  }
-});
-
 // ========== نظام النقاط ==========
 router.get('/api/credits', authenticateToken, async (req: any, res) => {
   try {
@@ -357,15 +305,6 @@ router.get('/api/credits', authenticateToken, async (req: any, res) => {
     res.json({ credits });
   } catch (error) {
     res.status(500).json({ message: 'خطأ في جلب الرصيد' });
-  }
-});
-
-router.get('/api/transactions', authenticateToken, async (req: any, res) => {
-  try {
-    const transactions = await storage.getTransactions(req.user.id);
-    res.json(transactions);
-  } catch (error) {
-    res.status(500).json({ message: 'خطأ في جلب المعاملات' });
   }
 });
 
@@ -379,16 +318,86 @@ router.get('/api/notifications', authenticateToken, async (req: any, res) => {
   }
 });
 
-router.post('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+// ========== دبلجة الصوت ==========
+router.post('/api/dub-to-speech', authenticateToken, async (req, res) => {
   try {
-    await storage.markNotificationAsRead(parseInt(req.params.id));
-    res.json({ message: 'تم تحديث الإشعار' });
-  } catch (error) {
-    res.status(500).json({ message: 'خطأ في تحديث الإشعار' });
+    const { text, language } = req.body;
+    if (!text || !language) {
+      return res.status(400).json({ message: 'النص واللغة مطلوبان' });
+    }
+    const audioBuffer = await generateVoiceDubbing(text, language);
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(audioBuffer);
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'خطأ في تحويل النص إلى كلام' });
   }
 });
 
-// ========== مسارات الملفات الثابتة ==========
+// ========== مسارات الإدارة ==========
+router.get('/api/admin/users', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const masterKey = req.headers['x-master-key'];
+    if (!storage.validateMasterKey(masterKey as string)) {
+      return res.status(403).json({ message: 'غير مصرح' });
+    }
+    const users = await storage.getAllUsers();
+    const safeUsers = users.map(({ password, ...rest }) => rest);
+    res.json(safeUsers);
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في جلب المستخدمين' });
+  }
+});
+
+router.get('/api/admin/stats', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const masterKey = req.headers['x-master-key'];
+    if (!storage.validateMasterKey(masterKey as string)) {
+      return res.status(403).json({ message: 'غير مصرح' });
+    }
+    const users = await storage.getAllUsers();
+    const totalUsers = users.length;
+    const totalCredits = users.reduce((sum, u) => sum + u.credits, 0);
+    const activeUsers = users.filter(u => u.isActive).length;
+    res.json({ totalUsers, totalCredits, activeUsers });
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في جلب الإحصائيات' });
+  }
+});
+
+router.post('/api/admin/users/:userId/toggle', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const masterKey = req.headers['x-master-key'];
+    if (!storage.validateMasterKey(masterKey as string)) {
+      return res.status(403).json({ message: 'غير مصرح' });
+    }
+    const userId = parseInt(req.params.userId);
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'المستخدم غير موجود' });
+    }
+    await storage.updateUser(userId, { isActive: !user.isActive });
+    res.json({ message: 'تم تحديث حالة المستخدم' });
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في تحديث المستخدم' });
+  }
+});
+
+router.post('/api/admin/credits/:userId', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const masterKey = req.headers['x-master-key'];
+    if (!storage.validateMasterKey(masterKey as string)) {
+      return res.status(403).json({ message: 'غير مصرح' });
+    }
+    const userId = parseInt(req.params.userId);
+    const { amount, description } = req.body;
+    await storage.addCredits(userId, amount, description || 'إضافة من الإدارة');
+    res.json({ message: 'تم إضافة الرصيد بنجاح' });
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في إضافة الرصيد' });
+  }
+});
+
+// خدمة الملفات الثابتة
 router.use('/uploads', express.static('uploads'));
 
 export default router;
