@@ -1,9 +1,7 @@
 import bcrypt from 'bcryptjs';
 import passport from 'passport';
 import { Strategy as LocalStrategy } from 'passport-local';
-import session from 'express-session';
 import { storage } from './storage';
-import { User } from '@shared/schema';
 
 // تشفير كلمة المرور
 export async function hashPassword(password: string): Promise<string> {
