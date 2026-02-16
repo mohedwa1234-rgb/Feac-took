@@ -23,7 +23,7 @@ app.use(session({
   saveUninitialized: false,
   store: storage.sessionStore,
   cookie: {
-    maxAge: 1000 * 60 * 60 * 24 * 7, // أسبوع
+    maxAge: 1000 * 60 * 60 * 24 * 7,
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax'
@@ -41,12 +41,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // CORS للتطوير
 if (process.env.NODE_ENV !== 'production') {
-  app.use((req, res, next) => {
+  app.use((_req, res, next) => {
     res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    if (req.method === 'OPTIONS') {
+    if (_req.method === 'OPTIONS') {
       return res.sendStatus(200);
     }
     next();
@@ -59,7 +59,7 @@ app.use(routes);
 // خدمة الملفات الثابتة في الإنتاج
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../public')));
-  app.get('*', (req, res) => {
+  app.get('*', (_req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
   });
 }
@@ -71,8 +71,6 @@ initializeSocket(httpServer);
 const PORT = process.env.PORT || 3000;
 httpServer.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  
-  // إنشاء فهارس قاعدة البيانات
   try {
     await createIndexes();
   } catch (error) {
