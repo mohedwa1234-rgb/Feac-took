@@ -39,41 +39,51 @@ setupAuth(passport);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS للتطوير
-if (process.env.NODE_ENV !== 'production') {
-  app.use((_req, res, next) => {
-    res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    if (_req.method === 'OPTIONS') {
-      return res.sendStatus(200);
-    }
-    next();
-  });
-}
+// CORS للتطوير - مهم جداً لـ Render
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-master-key');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // المسارات
-app.use(routes);
+app.use('/api', routes);
 
-// خدمة الملفات الثابتة في الإنتاج
+// خدمة الملفات الثابتة - مهم جداً
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// في الإنتاج، خدمة ملفات الواجهة الأمامية
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../public')));
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, '../public/index.html'));
+  // خدمة الملفات الثابتة من مجلد dist
+  const clientDistPath = path.join(__dirname, '../public');
+  app.use(express.static(clientDistPath));
+  
+  // أي مسار آخر يعيد index.html
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
 
 // تهيئة Socket.io
 initializeSocket(httpServer);
 
-// بدء الخادم
-const PORT = process.env.PORT || 3000;
-httpServer.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  try {
-    await createIndexes();
-  } catch (error) {
-    console.error('❌ Error creating indexes:', error);
-  }
-});
+// تصدير التطبيق لـ Vercel/Render
+export default app;
+
+// بدء الخادم فقط إذا لم يكن في بيئة Render/Vercel
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  httpServer.listen(PORT, async () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    try {
+      await createIndexes();
+    } catch (error) {
+      console.error('❌ Error creating indexes:', error);
+    }
+  });
+}
