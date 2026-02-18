@@ -2,7 +2,6 @@ import { pgTable, serial, text, integer, timestamp, boolean, jsonb, varchar } fr
 import { createInsertSchema } from 'drizzle-zod';
 import { z } from 'zod';
 
-// مفتاح التحقق السيادي
 export const MASTER_VALIDATION_KEY = "GENERAL_EYE_ONLY_VALIDATION_STRING";
 
 // جدول المستخدمين
@@ -15,7 +14,7 @@ export const users = pgTable('users', {
   bio: text('bio'),
   avatar: text('avatar'),
   coverPhoto: text('cover_photo'),
-  credits: integer('credits').default(300).notNull(),
+  credits: integer('credits').default(100).notNull(),
   role: varchar('role', { length: 20 }).default('user').notNull(),
   language: varchar('language', { length: 2 }).default('ar').notNull(),
   isActive: boolean('is_active').default(true),
@@ -77,30 +76,20 @@ export const comments = pgTable('comments', {
   createdAt: timestamp('created_at').defaultNow()
 });
 
-// جدول مفاتيح API
-export const apiKeys = pgTable('api_keys', {
+// جدول مفاتيح Groq (لكل مستخدم 10 خانات)
+export const groqKeys = pgTable('groq_keys', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
-  key: text('key').unique().notNull(),
+  key: text('key').notNull(), // مفتاح Groq API
   name: varchar('name', { length: 100 }).notNull(),
-  price: integer('price').notNull(),
-  usage: integer('usage').default(0),
-  limit: integer('limit').default(1000),
+  type: varchar('type', { length: 10 }).default('free').notNull(), // 'free' or 'paid'
+  points: integer('points').default(400), // النقاط الممنوحة (400 مجاني، 2000 مدفوع)
   isActive: boolean('is_active').default(true),
-  expiresAt: timestamp('expires_at'),
+  usageCount: integer('usage_count').default(0),
+  monthlyLimit: integer('monthly_limit'), // حد الاستخدام الشهري (اختياري)
   createdAt: timestamp('created_at').defaultNow(),
-  permissions: jsonb('permissions').default({})
-});
-
-// جدول المعاملات
-export const transactions = pgTable('transactions', {
-  id: serial('id').primaryKey(),
-  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
-  type: varchar('type', { length: 50 }).notNull(),
-  amount: integer('amount').notNull(),
-  description: text('description'),
-  reference: text('reference'),
-  createdAt: timestamp('created_at').defaultNow()
+  expiresAt: timestamp('expires_at'), // تاريخ انتهاء المفتاح المجاني
+  lastUsed: timestamp('last_used')
 });
 
 // جدول المكالمات
@@ -121,30 +110,28 @@ export const calls = pgTable('calls', {
   createdAt: timestamp('created_at').defaultNow()
 });
 
-// جدول الرسائل الخاصة
-export const messages = pgTable('messages', {
+// جدول طلبات دبلجة الفيديو
+export const videoDubbingJobs = pgTable('video_dubbing_jobs', {
   id: serial('id').primaryKey(),
-  senderId: integer('sender_id').references(() => users.id, { onDelete: 'cascade' }),
-  receiverId: integer('receiver_id').references(() => users.id, { onDelete: 'cascade' }),
-  content: text('content'),
-  mediaUrl: text('media_url'),
-  mediaType: varchar('media_type', { length: 10 }),
-  isRead: boolean('is_read').default(false),
-  isAITranslated: boolean('ai_translated').default(false),
-  createdAt: timestamp('created_at').defaultNow()
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  videoUrl: text('video_url').notNull(),
+  targetLanguage: varchar('target_language', { length: 2 }).notNull(),
+  status: varchar('status', { length: 20 }).default('pending'),
+  cost: integer('cost').default(10),
+  resultUrl: text('result_url'),
+  createdAt: timestamp('created_at').defaultNow(),
+  completedAt: timestamp('completed_at')
 });
 
-// جدول نماذج الذكاء الاصطناعي
-export const aiModels = pgTable('ai_models', {
+// جدول المعاملات
+export const transactions = pgTable('transactions', {
   id: serial('id').primaryKey(),
-  name: varchar('name', { length: 100 }).notNull(),
-  modelId: varchar('model_id', { length: 50 }).notNull(),
-  provider: varchar('provider', { length: 50 }).notNull(),
-  parameters: varchar('parameters', { length: 10 }).default('8B'),
-  pricePerCall: integer('price_per_call').default(10),
-  pricePerMinute: integer('price_per_minute').default(5),
-  isActive: boolean('is_active').default(true),
-  capabilities: jsonb('capabilities').default({})
+  userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 50 }).notNull(),
+  amount: integer('amount').notNull(),
+  description: text('description'),
+  reference: text('reference'),
+  createdAt: timestamp('created_at').defaultNow()
 });
 
 // جدول الإشعارات
@@ -168,19 +155,19 @@ export const insertUserSchema = createInsertSchema(users).extend({
 
 export const insertPostSchema = createInsertSchema(posts);
 export const insertCommentSchema = createInsertSchema(comments);
-export const insertApiKeySchema = createInsertSchema(apiKeys);
+export const insertGroqKeySchema = createInsertSchema(groqKeys).omit({ userId: true, usageCount: true, lastUsed: true });
 export const insertCallSchema = createInsertSchema(calls);
-export const insertMessageSchema = createInsertSchema(messages);
+export const insertVideoDubbingSchema = createInsertSchema(videoDubbingJobs);
 
 // أنواع TypeScript
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Post = typeof posts.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
-export type ApiKey = typeof apiKeys.$inferSelect;
+export type GroqKey = typeof groqKeys.$inferSelect;
+export type NewGroqKey = typeof groqKeys.$inferInsert;
 export type Call = typeof calls.$inferSelect;
-export type Message = typeof messages.$inferSelect;
-export type Follow = typeof follows.$inferSelect;
-export type Notification = typeof notifications.$inferSelect;
+export type VideoDubbingJob = typeof videoDubbingJobs.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
-export type AIModel = typeof aiModels.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type Follow = typeof follows.$inferSelect;
