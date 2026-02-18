@@ -6,17 +6,10 @@ import { storage } from './storage';
 import { setupAuth } from './auth';
 import routes from './routes';
 import { initializeSocket } from './socket';
-import { createIndexes } from './db';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const httpServer = createServer(app);
 
-// إعداد الجلسات
 app.use(session({
   secret: process.env.SESSION_SECRET || 'dev-secret',
   resave: false,
@@ -30,63 +23,34 @@ app.use(session({
   }
 }));
 
-// إعداد Passport
 app.use(passport.initialize());
 app.use(passport.session());
 setupAuth(passport);
 
-// Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS للتطوير
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-master-key');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-// المسارات
-app.use('/api', routes);
-
-// خدمة الملفات الثابتة
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-
-// في الإنتاج، خدمة ملفات الواجهة الأمامية - هذا الجزء المهم
-if (process.env.NODE_ENV === 'production') {
-  // مجلد public هو مكان ملفات الواجهة بعد البناء
-  const publicPath = path.join(__dirname, '../public');
-  console.log('Serving static files from:', publicPath);
-  
-  // خدمة الملفات الثابتة
-  app.use(express.static(publicPath));
-  
-  // أي مسار آخر يعيد index.html
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(publicPath, 'index.html'));
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', 'http://localhost:5173');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-master-key');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    if (req.method === 'OPTIONS') return res.sendStatus(200);
+    next();
   });
 }
 
-// تهيئة Socket.io
+app.use('/api', routes);
+app.use('/uploads', express.static('uploads'));
+
 initializeSocket(httpServer);
 
-// تصدير التطبيق لـ Render
 export default app;
 
-// بدء الخادم فقط إذا لم يكن في بيئة Render
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
-  httpServer.listen(PORT, async () => {
+  httpServer.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    try {
-      await createIndexes();
-    } catch (error) {
-      console.error('❌ Error creating indexes:', error);
-    }
   });
 }
