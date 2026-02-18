@@ -4,25 +4,21 @@ import path from 'path';
 
 export default defineConfig({
   plugins: [react()],
+  root: path.resolve(__dirname, 'client'),
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'client/src'),
       '@shared': path.resolve(__dirname, 'shared'),
     },
   },
-  root: path.resolve(__dirname, 'client'),
   build: {
-    outDir: path.resolve(__dirname, 'dist/public'), // هذا المهم
+    outDir: path.resolve(__dirname, 'dist/public'),
     emptyOutDir: true,
   },
   server: {
     port: 5173,
     proxy: {
       '/api': 'http://localhost:3000',
-      '/socket.io': {
-        target: 'http://localhost:3000',
-        ws: true,
-      },
     },
   },
 });
