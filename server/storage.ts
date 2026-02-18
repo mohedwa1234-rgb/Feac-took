@@ -1,8 +1,9 @@
 import { eq, and, or, desc, sql } from 'drizzle-orm';
 import { db } from './db';
 import { 
-  users, posts, comments, likes, follows, apiKeys, transactions, calls, messages, notifications,
-  type User, type NewUser, type Post, type Comment, type ApiKey, type Call, type Message, type Follow, type Notification,
+  users, posts, comments, likes, follows, groqKeys, transactions, calls, videoDubbingJobs, notifications,
+  type User, type NewUser, type Post, type Comment, type GroqKey, type NewGroqKey, type Call, 
+  type Follow, type Notification, type Transaction, type VideoDubbingJob,
   MASTER_VALIDATION_KEY
 } from '@shared/schema';
 import session from 'express-session';
@@ -46,13 +47,14 @@ export interface IStorage {
   getFollowing(userId: number): Promise<User[]>;
   areFriends(userId1: number, userId2: number): Promise<boolean>;
   
-  // مفاتيح API
-  createApiKey(userId: number, name: string, price: number): Promise<ApiKey>;
-  getApiKeys(userId: number): Promise<ApiKey[]>;
-  getAllApiKeys(): Promise<ApiKey[]>;
-  getApiKey(key: string): Promise<ApiKey | undefined>;
-  validateApiKey(key: string): Promise<boolean>;
-  useApiKey(key: string): Promise<void>;
+  // مفاتيح Groq
+  createGroqKey(userId: number, name: string, type: 'free' | 'paid', apiKey: string): Promise<GroqKey>;
+  getGroqKeys(userId: number): Promise<GroqKey[]>;
+  getGroqKeyById(id: number): Promise<GroqKey | undefined>;
+  getActiveGroqKey(userId: number): Promise<GroqKey | undefined>;
+  incrementGroqKeyUsage(keyId: number): Promise<void>;
+  countUserGroqKeys(userId: number): Promise<number>;
+  deactivateGroqKey(id: number): Promise<void>;
   
   // نظام النقاط
   addCredits(userId: number, amount: number, description: string): Promise<User>;
@@ -65,10 +67,10 @@ export interface IStorage {
   updateCall(id: number, data: Partial<Call>): Promise<Call>;
   getCall(id: number): Promise<Call | undefined>;
   
-  // الرسائل
-  createMessage(data: Partial<Message>): Promise<Message>;
-  getMessagesBetween(userId1: number, userId2: number): Promise<Message[]>;
-  markMessagesAsRead(userId: number, senderId: number): Promise<void>;
+  // دبلجة الفيديو
+  createVideoDubbingJob(userId: number, videoUrl: string, targetLanguage: string): Promise<VideoDubbingJob>;
+  updateVideoDubbingJob(id: number, data: Partial<VideoDubbingJob>): Promise<VideoDubbingJob>;
+  getVideoDubbingJobs(userId: number): Promise<VideoDubbingJob[]>;
   
   // الإشعارات
   createNotification(data: Partial<Notification>): Promise<Notification>;
@@ -117,7 +119,7 @@ export class DatabaseStorage implements IStorage {
   async createUser(insertUser: NewUser): Promise<User> {
     const [user] = await db.insert(users).values({
       ...insertUser,
-      credits: 300,
+      credits: 100,
       createdAt: new Date()
     }).returning();
     return user;
@@ -125,7 +127,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateUser(id: number, data: Partial<User>): Promise<User> {
     const [user] = await db.update(users)
-      .set({ ...data, updatedAt: new Date() })
+      .set({ ...data })
       .where(eq(users.id, id))
       .returning();
     return user;
@@ -306,52 +308,78 @@ export class DatabaseStorage implements IStorage {
     return !!follow;
   }
 
-  // ========== مفاتيح API ==========
-  async createApiKey(userId: number, name: string, price: number): Promise<ApiKey> {
-    const key = `ft_${randomBytes(32).toString('hex')}`;
-    const [apiKey] = await db.insert(apiKeys).values({
+  // ========== مفاتيح Groq ==========
+  async countUserGroqKeys(userId: number): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
+      .from(groqKeys)
+      .where(eq(groqKeys.userId, userId));
+    return result[0].count;
+  }
+
+  async createGroqKey(userId: number, name: string, type: 'free' | 'paid', apiKey: string): Promise<GroqKey> {
+    const count = await this.countUserGroqKeys(userId);
+    if (count >= 10) {
+      throw new Error('لا يمكن إضافة أكثر من 10 مفاتيح');
+    }
+
+    const points = type === 'free' ? 400 : 2000;
+    const expiresAt = type === 'free' ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
+
+    const [groqKey] = await db.insert(groqKeys).values({
       userId,
       name,
-      key,
-      price,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+      key: apiKey,
+      type,
+      points,
+      expiresAt,
+      createdAt: new Date()
     }).returning();
-    return apiKey;
+
+    return groqKey;
   }
 
-  async getApiKeys(userId: number): Promise<ApiKey[]> {
+  async getGroqKeys(userId: number): Promise<GroqKey[]> {
     return await db.select()
-      .from(apiKeys)
-      .where(eq(apiKeys.userId, userId))
-      .orderBy(desc(apiKeys.createdAt));
+      .from(groqKeys)
+      .where(eq(groqKeys.userId, userId))
+      .orderBy(desc(groqKeys.createdAt));
   }
 
-  async getAllApiKeys(): Promise<ApiKey[]> {
-    return await db.select()
-      .from(apiKeys)
-      .where(eq(apiKeys.isActive, true))
-      .orderBy(desc(apiKeys.createdAt));
+  async getGroqKeyById(id: number): Promise<GroqKey | undefined> {
+    const [key] = await db.select().from(groqKeys).where(eq(groqKeys.id, id));
+    return key;
   }
 
-  async getApiKey(key: string): Promise<ApiKey | undefined> {
-    const [apiKey] = await db.select()
-      .from(apiKeys)
-      .where(eq(apiKeys.key, key));
-    return apiKey;
+  async getActiveGroqKey(userId: number): Promise<GroqKey | undefined> {
+    const keys = await db.select()
+      .from(groqKeys)
+      .where(
+        and(
+          eq(groqKeys.userId, userId),
+          eq(groqKeys.isActive, true),
+          sql`${groqKeys.expiresAt} IS NULL OR ${groqKeys.expiresAt} > NOW()`
+        )
+      );
+
+    if (keys.length === 0) return undefined;
+    
+    const randomIndex = Math.floor(Math.random() * keys.length);
+    return keys[randomIndex];
   }
 
-  async validateApiKey(key: string): Promise<boolean> {
-    const apiKey = await this.getApiKey(key);
-    if (!apiKey || !apiKey.isActive) return false;
-    if (apiKey.expiresAt && apiKey.expiresAt < new Date()) return false;
-    if (apiKey.usage >= apiKey.limit) return false;
-    return true;
+  async incrementGroqKeyUsage(keyId: number): Promise<void> {
+    await db.update(groqKeys)
+      .set({ 
+        usageCount: sql`${groqKeys.usageCount} + 1`,
+        lastUsed: new Date()
+      })
+      .where(eq(groqKeys.id, keyId));
   }
 
-  async useApiKey(key: string): Promise<void> {
-    await db.update(apiKeys)
-      .set({ usage: sql`${apiKeys.usage} + 1` })
-      .where(eq(apiKeys.key, key));
+  async deactivateGroqKey(id: number): Promise<void> {
+    await db.update(groqKeys)
+      .set({ isActive: false })
+      .where(eq(groqKeys.id, id));
   }
 
   // ========== نظام النقاط ==========
@@ -440,31 +468,32 @@ export class DatabaseStorage implements IStorage {
     return call;
   }
 
-  // ========== الرسائل ==========
-  async createMessage(data: Partial<Message>): Promise<Message> {
-    const [message] = await db.insert(messages).values({
-      ...data,
+  // ========== دبلجة الفيديو ==========
+  async createVideoDubbingJob(userId: number, videoUrl: string, targetLanguage: string): Promise<VideoDubbingJob> {
+    const [job] = await db.insert(videoDubbingJobs).values({
+      userId,
+      videoUrl,
+      targetLanguage,
+      status: 'pending',
+      cost: 10,
       createdAt: new Date()
     }).returning();
-    return message;
+    return job;
   }
 
-  async getMessagesBetween(userId1: number, userId2: number): Promise<Message[]> {
+  async updateVideoDubbingJob(id: number, data: Partial<VideoDubbingJob>): Promise<VideoDubbingJob> {
+    const [job] = await db.update(videoDubbingJobs)
+      .set(data)
+      .where(eq(videoDubbingJobs.id, id))
+      .returning();
+    return job;
+  }
+
+  async getVideoDubbingJobs(userId: number): Promise<VideoDubbingJob[]> {
     return await db.select()
-      .from(messages)
-      .where(
-        or(
-          and(eq(messages.senderId, userId1), eq(messages.receiverId, userId2)),
-          and(eq(messages.senderId, userId2), eq(messages.receiverId, userId1))
-        )
-      )
-      .orderBy(messages.createdAt);
-  }
-
-  async markMessagesAsRead(userId: number, senderId: number): Promise<void> {
-    await db.update(messages)
-      .set({ isRead: true })
-      .where(and(eq(messages.senderId, senderId), eq(messages.receiverId, userId)));
+      .from(videoDubbingJobs)
+      .where(eq(videoDubbingJobs.userId, userId))
+      .orderBy(desc(videoDubbingJobs.createdAt));
   }
 
   // ========== الإشعارات ==========
