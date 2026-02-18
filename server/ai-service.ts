@@ -1,7 +1,6 @@
 import Groq from 'groq-sdk';
 import { storage } from './storage';
 
-// دالة لاختيار مفتاح Groq نشط لمستخدم معين
 async function getGroqClientForUser(userId: number): Promise<{ client: Groq; keyId: number }> {
   const key = await storage.getActiveGroqKey(userId);
   if (!key) {
@@ -11,7 +10,6 @@ async function getGroqClientForUser(userId: number): Promise<{ client: Groq; key
   return { client, keyId: key.id };
 }
 
-// ترجمة النصوص
 export async function generateAITranslation(
   text: string, 
   targetLanguage: string,
@@ -20,7 +18,6 @@ export async function generateAITranslation(
 ): Promise<string> {
   try {
     const { client, keyId } = await getGroqClientForUser(userId);
-    
     const model = modelSize === '8B' ? 'llama3-8b-8192' : 'llama3-70b-8192';
     
     const completion = await client.chat.completions.create({
@@ -36,9 +33,7 @@ export async function generateAITranslation(
       max_tokens: 4000
     });
 
-    // تحديث عداد الاستخدام
     await storage.incrementGroqKeyUsage(keyId);
-
     return completion.choices[0]?.message?.content || text;
   } catch (error) {
     console.error('Translation error:', error);
@@ -46,7 +41,6 @@ export async function generateAITranslation(
   }
 }
 
-// ترجمة صفحة كاملة (نص HTML)
 export async function translatePage(
   html: string, 
   targetLanguage: string,
@@ -63,7 +57,7 @@ export async function translatePage(
         },
         { role: 'user', content: html }
       ],
-      model: 'llama3-8b-8192', // نموذج 8B
+      model: 'llama3-8b-8192',
       temperature: 0.3,
       max_tokens: 8000
     });
@@ -76,7 +70,6 @@ export async function translatePage(
   }
 }
 
-// إنشاء منشور بالذكاء الاصطناعي
 export async function generateAIPost(
   prompt: string,
   userId: number
@@ -105,7 +98,6 @@ export async function generateAIPost(
   }
 }
 
-// تحليل المشاعر
 export async function analyzeSentiment(
   text: string,
   userId: number
@@ -134,7 +126,6 @@ export async function analyzeSentiment(
   }
 }
 
-// دبلجة الصوت (نص إلى كلام) - تبقى كما هي باستخدام ElevenLabs
 export async function generateVoiceDubbing(
   text: string,
   targetLanguage: string,
