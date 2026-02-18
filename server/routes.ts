@@ -1,13 +1,19 @@
 import express from 'express';
 import { storage } from './storage';
-import { insertUserSchema } from '@shared/schema';
+import { insertUserSchema, insertGroqKeySchema } from '@shared/schema';
 import { z } from 'zod';
-import { generateVoiceDubbing } from './ai-service';
+import { generateAITranslation, translatePage, generateAIPost, analyzeSentiment, generateVoiceDubbing } from './ai-service';
 import { authenticateToken, isAdmin, hashPassword } from './auth';
 import passport from 'passport';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+
+export const config = {
+  api: {
+    bodyParser: true,
+  },
+};
 
 const router = express.Router();
 
@@ -29,7 +35,7 @@ const storage_multer = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage_multer,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
+  limits: { fileSize: 100 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif|mp4|mov|avi/;
     const ext = path.extname(file.originalname).toLowerCase();
@@ -166,7 +172,7 @@ router.post('/api/posts', authenticateToken, upload.single('media'), async (req:
       postData.mediaUrl = `/uploads/${file.filename}`;
       postData.mediaType = isVideo ? 'video' : 'image';
       if (isVideo) {
-        postData.duration = 30; // قيمة افتراضية
+        postData.duration = 30;
       }
     }
     
@@ -271,30 +277,59 @@ router.delete('/api/follow/:userId', authenticateToken, async (req: any, res) =>
   }
 });
 
-// ========== مفاتيح API ==========
-router.post('/api/api-keys', authenticateToken, async (req: any, res) => {
+// ========== مفاتيح Groq ==========
+router.post('/api/groq-keys', authenticateToken, async (req: any, res) => {
   try {
-    const { name, price } = req.body;
+    const { name, type, key } = req.body;
     const userId = req.user.id;
     
-    if (price < 10 || price > 10000) {
-      return res.status(400).json({ message: 'السعر يجب أن يكون بين 10 و 10000' });
+    if (!name || !type || !key) {
+      return res.status(400).json({ message: 'الاسم والنوع والمفتاح مطلوبون' });
+    }
+
+    if (type !== 'free' && type !== 'paid') {
+      return res.status(400).json({ message: 'نوع المفتاح غير صالح' });
     }
     
-    const apiKey = await storage.createApiKey(userId, name, price);
-    res.status(201).json(apiKey);
+    const count = await storage.countUserGroqKeys(userId);
+    if (count >= 10) {
+      return res.status(400).json({ message: 'لا يمكن إضافة أكثر من 10 مفاتيح' });
+    }
+    
+    const groqKey = await storage.createGroqKey(userId, name, type, key);
+    
+    const points = type === 'free' ? 400 : 2000;
+    await storage.addCredits(userId, points, `إضافة مفتاح ${type === 'free' ? 'مجاني' : 'مدفوع'}`);
+    
+    res.status(201).json(groqKey);
   } catch (error) {
-    res.status(500).json({ message: 'خطأ في إنشاء المفتاح' });
+    console.error(error);
+    res.status(500).json({ message: 'خطأ في إضافة المفتاح' });
   }
 });
 
-router.get('/api/api-keys', authenticateToken, async (req: any, res) => {
+router.get('/api/groq-keys', authenticateToken, async (req: any, res) => {
   try {
     const userId = req.user.id;
-    const keys = await storage.getApiKeys(userId);
+    const keys = await storage.getGroqKeys(userId);
     res.json(keys);
   } catch (error) {
     res.status(500).json({ message: 'خطأ في جلب المفاتيح' });
+  }
+});
+
+router.delete('/api/groq-keys/:id', authenticateToken, async (req: any, res) => {
+  try {
+    const keyId = parseInt(req.params.id);
+    const userId = req.user.id;
+    const key = await storage.getGroqKeyById(keyId);
+    if (!key || key.userId !== userId) {
+      return res.status(404).json({ message: 'المفتاح غير موجود' });
+    }
+    await storage.deactivateGroqKey(keyId);
+    res.json({ message: 'تم تعطيل المفتاح' });
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في حذف المفتاح' });
   }
 });
 
@@ -308,13 +343,140 @@ router.get('/api/credits', authenticateToken, async (req: any, res) => {
   }
 });
 
-// ========== الإشعارات ==========
-router.get('/api/notifications', authenticateToken, async (req: any, res) => {
+router.get('/api/credits-info', authenticateToken, async (req: any, res) => {
+  const lang = req.user.language || 'ar';
+  const info = {
+    ar: {
+      callPerMinute: 'مكالمة مدبلجة: 10 نقاط/الدقيقة',
+      videoDubbing: 'دبلجة فيديو كامل: 10 نقاط',
+      translation: 'ترجمة نص: 3 نقاط',
+      freeKey: 'إضافة مفتاح مجاني: +400 نقطة',
+      paidKey: 'إضافة مفتاح مدفوع: +2000 نقطة'
+    },
+    en: {
+      callPerMinute: 'Dubbed call: 10 credits/minute',
+      videoDubbing: 'Full video dubbing: 10 credits',
+      translation: 'Text translation: 3 credits',
+      freeKey: 'Add free key: +400 credits',
+      paidKey: 'Add paid key: +2000 credits'
+    }
+  };
+  res.json(info[lang] || info.ar);
+});
+
+router.get('/api/transactions', authenticateToken, async (req: any, res) => {
   try {
-    const notifications = await storage.getNotifications(req.user.id);
-    res.json(notifications);
+    const transactions = await storage.getTransactions(req.user.id);
+    res.json(transactions);
   } catch (error) {
-    res.status(500).json({ message: 'خطأ في جلب الإشعارات' });
+    res.status(500).json({ message: 'خطأ في جلب المعاملات' });
+  }
+});
+
+// ========== ترجمة النصوص ==========
+router.post('/api/translate', authenticateToken, async (req: any, res) => {
+  try {
+    const { text, targetLanguage } = req.body;
+    if (!text || !targetLanguage) {
+      return res.status(400).json({ message: 'النص واللغة مطلوبان' });
+    }
+
+    await storage.deductCredits(req.user.id, 3, `ترجمة نص إلى ${targetLanguage}`);
+
+    const translatedText = await generateAITranslation(text, targetLanguage, req.user.id);
+    res.json({ translatedText });
+  } catch (error: any) {
+    if (error.message === 'رصيد غير كافٍ') {
+      res.status(400).json({ message: 'رصيد غير كافٍ للترجمة' });
+    } else {
+      res.status(500).json({ message: error.message || 'خطأ في الترجمة' });
+    }
+  }
+});
+
+router.post('/api/translate-page', authenticateToken, async (req: any, res) => {
+  try {
+    const { html, targetLanguage } = req.body;
+    if (!html || !targetLanguage) {
+      return res.status(400).json({ message: 'النص واللغة مطلوبان' });
+    }
+
+    await storage.deductCredits(req.user.id, 10, `ترجمة صفحة كاملة إلى ${targetLanguage}`);
+
+    const translatedHtml = await translatePage(html, targetLanguage, req.user.id);
+    res.json({ translatedHtml });
+  } catch (error: any) {
+    if (error.message === 'رصيد غير كافٍ') {
+      res.status(400).json({ message: 'رصيد غير كافٍ' });
+    } else {
+      res.status(500).json({ message: error.message || 'خطأ في الترجمة' });
+    }
+  }
+});
+
+router.post('/api/generate-post', authenticateToken, async (req: any, res) => {
+  try {
+    const { prompt } = req.body;
+    if (!prompt) {
+      return res.status(400).json({ message: 'الموضوع مطلوب' });
+    }
+
+    await storage.deductCredits(req.user.id, 5, 'إنشاء منشور بالذكاء الاصطناعي');
+
+    const post = await generateAIPost(prompt, req.user.id);
+    res.json({ post });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'خطأ في إنشاء المنشور' });
+  }
+});
+
+router.post('/api/analyze-sentiment', authenticateToken, async (req: any, res) => {
+  try {
+    const { text } = req.body;
+    if (!text) {
+      return res.status(400).json({ message: 'النص مطلوب' });
+    }
+
+    await storage.deductCredits(req.user.id, 2, 'تحليل مشاعر');
+
+    const sentiment = await analyzeSentiment(text, req.user.id);
+    res.json({ sentiment });
+  } catch (error: any) {
+    res.status(500).json({ message: error.message || 'خطأ في التحليل' });
+  }
+});
+
+// ========== دبلجة الفيديو ==========
+router.post('/api/dub-video', authenticateToken, upload.single('video'), async (req: any, res) => {
+  try {
+    const userId = req.user.id;
+    const { targetLanguage } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'الرجاء رفع فيديو' });
+    }
+
+    await storage.deductCredits(userId, 10, `دبلجة فيديو إلى ${targetLanguage}`);
+
+    const videoUrl = `/uploads/${req.file.filename}`;
+    const job = await storage.createVideoDubbingJob(userId, videoUrl, targetLanguage);
+
+    res.json({ message: 'تم استلام الفيديو وجاري معالجته', jobId: job.id });
+  } catch (error: any) {
+    if (error.message === 'رصيد غير كافٍ') {
+      res.status(400).json({ message: 'رصيد غير كافٍ لدبلجة الفيديو' });
+    } else {
+      res.status(500).json({ message: error.message || 'خطأ في دبلجة الفيديو' });
+    }
+  }
+});
+
+router.get('/api/dub-jobs', authenticateToken, async (req: any, res) => {
+  try {
+    const jobs = await storage.getVideoDubbingJobs(req.user.id);
+    res.json(jobs);
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في جلب المهام' });
   }
 });
 
@@ -329,7 +491,26 @@ router.post('/api/dub-to-speech', authenticateToken, async (req, res) => {
     res.set('Content-Type', 'audio/mpeg');
     res.send(audioBuffer);
   } catch (error: any) {
-    res.status(500).json({ message: error.message || 'خطأ في تحويل النص إلى كلام' });
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// ========== الإشعارات ==========
+router.get('/api/notifications', authenticateToken, async (req: any, res) => {
+  try {
+    const notifications = await storage.getNotifications(req.user.id);
+    res.json(notifications);
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في جلب الإشعارات' });
+  }
+});
+
+router.post('/api/notifications/:id/read', authenticateToken, async (req, res) => {
+  try {
+    await storage.markNotificationAsRead(parseInt(req.params.id));
+    res.json({ message: 'تم تحديث الإشعار' });
+  } catch (error) {
+    res.status(500).json({ message: 'خطأ في تحديث الإشعار' });
   }
 });
 
