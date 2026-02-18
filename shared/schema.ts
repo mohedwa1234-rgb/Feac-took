@@ -26,7 +26,7 @@ export const users = pgTable('users', {
   metadata: jsonb('metadata').default({})
 });
 
-// جدول العلاقات (متابعة)
+// جدول العلاقات
 export const follows = pgTable('follows', {
   id: serial('id').primaryKey(),
   followerId: integer('follower_id').references(() => users.id, { onDelete: 'cascade' }),
@@ -76,19 +76,19 @@ export const comments = pgTable('comments', {
   createdAt: timestamp('created_at').defaultNow()
 });
 
-// جدول مفاتيح Groq (لكل مستخدم 10 خانات)
+// جدول مفاتيح Groq (10 خانات كحد أقصى)
 export const groqKeys = pgTable('groq_keys', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, { onDelete: 'cascade' }),
-  key: text('key').notNull(), // مفتاح Groq API
+  key: text('key').notNull(),
   name: varchar('name', { length: 100 }).notNull(),
   type: varchar('type', { length: 10 }).default('free').notNull(), // 'free' or 'paid'
-  points: integer('points').default(400), // النقاط الممنوحة (400 مجاني، 2000 مدفوع)
+  points: integer('points').default(400),
   isActive: boolean('is_active').default(true),
   usageCount: integer('usage_count').default(0),
-  monthlyLimit: integer('monthly_limit'), // حد الاستخدام الشهري (اختياري)
+  monthlyLimit: integer('monthly_limit'),
   createdAt: timestamp('created_at').defaultNow(),
-  expiresAt: timestamp('expires_at'), // تاريخ انتهاء المفتاح المجاني
+  expiresAt: timestamp('expires_at'),
   lastUsed: timestamp('last_used')
 });
 
@@ -146,6 +146,19 @@ export const notifications = pgTable('notifications', {
   createdAt: timestamp('created_at').defaultNow()
 });
 
+// جدول الرسائل الخاصة
+export const messages = pgTable('messages', {
+  id: serial('id').primaryKey(),
+  senderId: integer('sender_id').references(() => users.id, { onDelete: 'cascade' }),
+  receiverId: integer('receiver_id').references(() => users.id, { onDelete: 'cascade' }),
+  content: text('content'),
+  mediaUrl: text('media_url'),
+  mediaType: varchar('media_type', { length: 10 }),
+  isRead: boolean('is_read').default(false),
+  isAITranslated: boolean('ai_translated').default(false),
+  createdAt: timestamp('created_at').defaultNow()
+});
+
 // دوال التحقق
 export const insertUserSchema = createInsertSchema(users).extend({
   password: z.string().min(6, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل'),
@@ -158,6 +171,7 @@ export const insertCommentSchema = createInsertSchema(comments);
 export const insertGroqKeySchema = createInsertSchema(groqKeys).omit({ userId: true, usageCount: true, lastUsed: true });
 export const insertCallSchema = createInsertSchema(calls);
 export const insertVideoDubbingSchema = createInsertSchema(videoDubbingJobs);
+export const insertMessageSchema = createInsertSchema(messages);
 
 // أنواع TypeScript
 export type User = typeof users.$inferSelect;
@@ -165,9 +179,9 @@ export type NewUser = typeof users.$inferInsert;
 export type Post = typeof posts.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
 export type GroqKey = typeof groqKeys.$inferSelect;
-export type NewGroqKey = typeof groqKeys.$inferInsert;
 export type Call = typeof calls.$inferSelect;
 export type VideoDubbingJob = typeof videoDubbingJobs.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Follow = typeof follows.$inferSelect;
+export type Message = typeof messages.$inferSelect;
