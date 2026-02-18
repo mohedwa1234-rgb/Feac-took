@@ -1,72 +1,104 @@
-import OpenAI from 'openai';
+import Groq from 'groq-sdk';
+import { storage } from './storage';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || 'dummy-key'
-});
+// دالة لاختيار مفتاح Groq نشط لمستخدم معين
+async function getGroqClientForUser(userId: number): Promise<{ client: Groq; keyId: number }> {
+  const key = await storage.getActiveGroqKey(userId);
+  if (!key) {
+    throw new Error('لا يوجد مفتاح Groq نشط لهذا المستخدم. الرجاء إضافة مفتاح.');
+  }
+  const client = new Groq({ apiKey: key.key });
+  return { client, keyId: key.id };
+}
 
 // ترجمة النصوص
 export async function generateAITranslation(
   text: string, 
   targetLanguage: string,
+  userId: number,
   modelSize: '8B' | '70B' = '8B'
 ): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('OPENAI_API_KEY not set, returning original text');
-    return text;
-  }
-
   try {
-    const model = modelSize === '8B' ? 'gpt-3.5-turbo' : 'gpt-4';
+    const { client, keyId } = await getGroqClientForUser(userId);
     
-    const response = await openai.chat.completions.create({
-      model: model,
+    const model = modelSize === '8B' ? 'llama3-8b-8192' : 'llama3-70b-8192';
+    
+    const completion = await client.chat.completions.create({
       messages: [
         {
-          role: "system",
-          content: `أنت مترجم محترف. ترجم النص التالي إلى ${
-            targetLanguage === 'ar' ? 'العربية' : 'الإنجليزية'
-          } بدقة واحترافية.`
+          role: 'system',
+          content: `أنت مترجم محترف. ترجم النص التالي إلى ${targetLanguage} بدقة. حافظ على المعنى.`
         },
-        {
-          role: "user",
-          content: text
-        }
+        { role: 'user', content: text }
       ],
+      model: model,
       temperature: 0.3,
-      max_tokens: 1000
+      max_tokens: 4000
     });
-    
-    return response.choices[0].message.content || text;
+
+    // تحديث عداد الاستخدام
+    await storage.incrementGroqKeyUsage(keyId);
+
+    return completion.choices[0]?.message?.content || text;
   } catch (error) {
     console.error('Translation error:', error);
-    return text;
+    throw new Error('فشلت الترجمة');
+  }
+}
+
+// ترجمة صفحة كاملة (نص HTML)
+export async function translatePage(
+  html: string, 
+  targetLanguage: string,
+  userId: number
+): Promise<string> {
+  try {
+    const { client, keyId } = await getGroqClientForUser(userId);
+    
+    const completion = await client.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `أنت مترجم محترف. ترجم النص التالي إلى ${targetLanguage} مع الحفاظ على علامات HTML إن وجدت.`
+        },
+        { role: 'user', content: html }
+      ],
+      model: 'llama3-8b-8192', // نموذج 8B
+      temperature: 0.3,
+      max_tokens: 8000
+    });
+
+    await storage.incrementGroqKeyUsage(keyId);
+    return completion.choices[0]?.message?.content || html;
+  } catch (error) {
+    console.error('Page translation error:', error);
+    return html;
   }
 }
 
 // إنشاء منشور بالذكاء الاصطناعي
-export async function generateAIPost(prompt: string): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    return prompt;
-  }
-
+export async function generateAIPost(
+  prompt: string,
+  userId: number
+): Promise<string> {
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    const { client, keyId } = await getGroqClientForUser(userId);
+    
+    const completion = await client.chat.completions.create({
       messages: [
         {
-          role: "system",
-          content: "أنشئ منشوراً جذاباً ومناسباً لوسائل التواصل الاجتماعي بناء على المدخلات التالية."
+          role: 'system',
+          content: 'أنشئ منشوراً جذاباً ومناسباً لوسائل التواصل الاجتماعي بناء على المدخلات التالية.'
         },
-        {
-          role: "user",
-          content: prompt
-        }
+        { role: 'user', content: prompt }
       ],
+      model: 'llama3-8b-8192',
       temperature: 0.7,
-      max_tokens: 300
+      max_tokens: 500
     });
-    
-    return response.choices[0].message.content || prompt;
+
+    await storage.incrementGroqKeyUsage(keyId);
+    return completion.choices[0]?.message?.content || prompt;
   } catch (error) {
     console.error('Post generation error:', error);
     return prompt;
@@ -74,36 +106,35 @@ export async function generateAIPost(prompt: string): Promise<string> {
 }
 
 // تحليل المشاعر
-export async function analyzeSentiment(text: string): Promise<string> {
-  if (!process.env.OPENAI_API_KEY) {
-    return 'neutral';
-  }
-
+export async function analyzeSentiment(
+  text: string,
+  userId: number
+): Promise<string> {
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+    const { client, keyId } = await getGroqClientForUser(userId);
+    
+    const completion = await client.chat.completions.create({
       messages: [
         {
-          role: "system",
-          content: "حلل المشاعر في النص التالي وأجب بكلمة واحدة فقط: positive, negative, أو neutral"
+          role: 'system',
+          content: 'حلل المشاعر في النص التالي وأجب بكلمة واحدة فقط: positive, negative, أو neutral'
         },
-        {
-          role: "user",
-          content: text
-        }
+        { role: 'user', content: text }
       ],
+      model: 'llama3-8b-8192',
       temperature: 0.3,
       max_tokens: 10
     });
-    
-    return response.choices[0].message.content?.toLowerCase() || 'neutral';
+
+    await storage.incrementGroqKeyUsage(keyId);
+    return completion.choices[0]?.message?.content?.toLowerCase() || 'neutral';
   } catch (error) {
     console.error('Sentiment analysis error:', error);
     return 'neutral';
   }
 }
 
-// دالة دبلجة الصوت (تحويل النص إلى كلام باستخدام ElevenLabs)
+// دبلجة الصوت (نص إلى كلام) - تبقى كما هي باستخدام ElevenLabs
 export async function generateVoiceDubbing(
   text: string,
   targetLanguage: string,
