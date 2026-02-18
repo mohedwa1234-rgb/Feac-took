@@ -4,8 +4,6 @@ import { storage } from './storage';
 import { generateAITranslation } from './ai-service';
 
 let io: Server;
-
-// تخزين جلسات المكالمات النشطة
 const activeCalls = new Map();
 const userSockets = new Map();
 
@@ -22,14 +20,12 @@ export function initializeSocket(httpServer: HttpServer) {
   io.on('connection', (socket) => {
     console.log('🟢 مستخدم متصل:', socket.id);
 
-    // تسجيل المستخدم
     socket.on('register-user', (userId: number) => {
       userSockets.set(userId, socket.id);
       socket.join(`user-${userId}`);
       console.log(`👤 مستخدم ${userId} مسجل`);
     });
 
-    // بدء مكالمة
     socket.on('start-call', async (data: {
       callerId: number,
       receiverId: number,
@@ -41,14 +37,13 @@ export function initializeSocket(httpServer: HttpServer) {
       try {
         const { callerId, receiverId, callType, sourceLanguage, targetLanguage, useAITranslation } = data;
 
-        // التحقق من الرصيد (5 نقاط للدقيقة)
+        // التحقق من الرصيد (10 نقاط للدقيقة)
         const callerCredits = await storage.getUserCredits(callerId);
-        if (callerCredits < 5) {
+        if (callerCredits < 10) {
           socket.emit('call-error', { message: 'رصيد غير كافٍ للمكالمة' });
           return;
         }
 
-        // إنشاء سجل المكالمة
         const call = await storage.createCall({
           callerId,
           receiverId,
@@ -68,7 +63,6 @@ export function initializeSocket(httpServer: HttpServer) {
           callId
         });
 
-        // إرسال طلب المكالمة للمستقبل
         const receiverSocketId = userSockets.get(receiverId);
         if (receiverSocketId) {
           io.to(receiverSocketId).emit('incoming-call', {
@@ -88,7 +82,6 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // قبول المكالمة
     socket.on('accept-call', async (data: { callId: number, receiverId: number }) => {
       const { callId, receiverId } = data;
       const call = activeCalls.get(callId);
@@ -96,7 +89,6 @@ export function initializeSocket(httpServer: HttpServer) {
       if (call) {
         await storage.updateCall(callId, { status: 'accepted' });
 
-        // إشعار المتصل
         const callerSocketId = userSockets.get(call.callerId);
         if (callerSocketId) {
           io.to(callerSocketId).emit('call-accepted', {
@@ -106,7 +98,6 @@ export function initializeSocket(httpServer: HttpServer) {
           });
         }
 
-        // إنشاء غرفة خاصة للمكالمة
         const roomName = `call-${callId}`;
         socket.join(roomName);
         
@@ -115,12 +106,10 @@ export function initializeSocket(httpServer: HttpServer) {
           callerSocket.join(roomName);
         }
 
-        // بدء عد التكلفة
         startCallBilling(callId, call.callerId);
       }
     });
 
-    // رفض المكالمة
     socket.on('reject-call', async (data: { callId: number }) => {
       const { callId } = data;
       const call = activeCalls.get(callId);
@@ -137,17 +126,15 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // إنهاء المكالمة
     socket.on('end-call', async (data: { callId: number }) => {
       const { callId } = data;
       const call = activeCalls.get(callId);
 
       if (call) {
-        const duration = Math.floor((Date.now() - call.startTime) / 1000); // بالثواني
+        const duration = Math.floor((Date.now() - call.startTime) / 1000);
         const minutes = Math.ceil(duration / 60);
-        const cost = minutes * 5; // 5 نقاط لكل دقيقة
+        const cost = minutes * 10; // 10 نقاط لكل دقيقة
 
-        // خصم النقاط
         try {
           await storage.deductCredits(call.callerId, cost, `مكالمة ${call.callType} لمدة ${minutes} دقيقة`);
         } catch (error) {
@@ -161,10 +148,8 @@ export function initializeSocket(httpServer: HttpServer) {
           cost
         });
 
-        // إشعار جميع الأطراف
         io.to(`call-${callId}`).emit('call-ended', { callId, duration, cost });
 
-        // مغادرة الغرفة
         const room = io.sockets.adapter.rooms.get(`call-${callId}`);
         if (room) {
           for (const socketId of room) {
@@ -177,7 +162,6 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // ترجمة صوتية فورية (WebRTC + AI)
     socket.on('translate-audio', async (data: {
       callId: number,
       audioData: string,
@@ -187,10 +171,10 @@ export function initializeSocket(httpServer: HttpServer) {
       try {
         const { callId, audioData, sourceLanguage, targetLanguage } = data;
 
-        // استخدام نموذج 8B للترجمة
-        const translatedText = await generateAITranslation(audioData, targetLanguage, '8B');
+        // يمكن استخدام نموذج 8B للترجمة (يحتاج userId)
+        // هذه دالة مبسطة، تحتاج userId من السياق
+        const translatedText = await generateAITranslation(audioData, targetLanguage, 1); // userId تجريبي
 
-        // إرسال الترجمة للمستقبل
         socket.to(`call-${callId}`).emit('translated-audio', {
           callId,
           translatedText,
@@ -201,7 +185,6 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // إرسال إشارات WebRTC (للـ Peer-to-Peer)
     socket.on('call-signal', (data: { callId: number, signal: any, targetId: number }) => {
       const targetSocketId = userSockets.get(data.targetId);
       if (targetSocketId) {
@@ -213,7 +196,6 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // رسالة خاصة
     socket.on('private-message', async (data: {
       senderId: number,
       receiverId: number,
@@ -240,11 +222,9 @@ export function initializeSocket(httpServer: HttpServer) {
       }
     });
 
-    // قطع الاتصال
     socket.on('disconnect', () => {
       console.log('🔴 مستخدم قطع الاتصال:', socket.id);
       
-      // إنهاء جميع مكالمات المستخدم
       for (const [callId, call] of activeCalls.entries()) {
         if (call.socketId === socket.id || call.receiverSocketId === socket.id) {
           io.to(`call-${callId}`).emit('call-ended', { callId, reason: 'disconnected' });
@@ -252,7 +232,6 @@ export function initializeSocket(httpServer: HttpServer) {
         }
       }
 
-      // إزالة المستخدم من الخريطة
       for (const [userId, socketId] of userSockets.entries()) {
         if (socketId === socket.id) {
           userSockets.delete(userId);
@@ -265,7 +244,6 @@ export function initializeSocket(httpServer: HttpServer) {
   return io;
 }
 
-// دالة حساب التكلفة كل دقيقة
 function startCallBilling(callId: number, userId: number) {
   let minutes = 0;
   const interval = setInterval(async () => {
@@ -277,17 +255,16 @@ function startCallBilling(callId: number, userId: number) {
       return;
     }
 
-    // خصم 5 نقاط كل دقيقة
-    if (minutes % 1 === 0) { // كل دقيقة حقيقية (60 ثانية)
+    // خصم 10 نقاط كل دقيقة
+    if (minutes % 1 === 0) { // كل دقيقة
       try {
-        await storage.deductCredits(userId, 5, `تكلفة مكالمة ${callId} - ${minutes} دقيقة`);
+        await storage.deductCredits(userId, 10, `تكلفة مكالمة ${callId} - ${minutes} دقيقة`);
         io.to(`call-${callId}`).emit('call-billing', {
           callId,
           minutes,
-          cost: minutes * 5
+          cost: minutes * 10
         });
       } catch (error) {
-        // إذا نفذ الرصيد، أنهي المكالمة
         io.to(`call-${callId}`).emit('call-ended', {
           callId,
           reason: 'insufficient_credits',
@@ -296,7 +273,7 @@ function startCallBilling(callId: number, userId: number) {
         clearInterval(interval);
       }
     }
-  }, 60000); // كل دقيقة
+  }, 60000);
 
   return interval;
 }
